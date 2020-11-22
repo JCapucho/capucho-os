@@ -15,6 +15,7 @@ pub mod acpi;
 pub mod allocator;
 pub mod gdt;
 pub mod interrupts;
+pub mod logger;
 pub mod memory;
 pub mod pci;
 pub mod serial;
@@ -25,7 +26,12 @@ pub fn init() {
     interrupts::init_idt();
     unsafe { interrupts::PICS.lock().initialize() };
     x86_64::instructions::interrupts::enable();
+
+    // Setup logger
+    log::set_logger(&logger::Logger).unwrap();
+    log::set_max_level(log::LevelFilter::Debug);
 }
+
 pub trait Testable {
     fn run(&self) -> ();
 }

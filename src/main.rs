@@ -38,13 +38,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     let platform_info = acpi_tables.platform_info().unwrap();
 
-    println!("Interrupt model: {:?}", platform_info.interrupt_model);
+    log::info!("Interrupt model: {:#?}", platform_info.interrupt_model);
     if let Some(ref processor_info) = platform_info.processor_info {
-        println!("Boot processor: {:?}", processor_info.boot_processor);
-        println!(
-            "{} Ap processors",
-            processor_info.application_processors.len()
-        );
+        log::info!("Boot processor: {:?}", processor_info.boot_processor);
+
+        for ap_processor in processor_info.application_processors.iter() {
+            log::info!("Application processor: {:?}", ap_processor);
+        }
     }
 
     let devices = capucho_os::pci::brute_force_find();
@@ -57,7 +57,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         let (rev, class, subclass, interface) = header.revision_and_class(&access);
         let has_multiple_functions = header.has_multiple_functions(&access);
 
-        println!(
+        log::info!(
             "{:?} rev: {} interface: {} functions?: {}",
             DeviceType::from((class, subclass)),
             rev,

@@ -15,12 +15,14 @@ pc-keyboard = "0.5"
 linked_list_allocator = "0.8"
 pci_types = "0.2"
 acpi = "2.0"
+log = "0.4"
 
 [dependencies.lazy_static]
 version = "1.0"
 features = ["spin_no_std"]
 
 [package.metadata.bootimage]
+run-args = ["-serial", "stdio"]
 test-args = [
     "-device",
     "isa-debug-exit,iobase=0xf4,iosize=0x04",

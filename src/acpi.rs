@@ -1,7 +1,4 @@
-use crate::{
-    memory::{identity_map, identity_unmap, BootInfoFrameAllocator},
-    println,
-};
+use crate::memory::{identity_map, identity_unmap, BootInfoFrameAllocator};
 use acpi::{AcpiHandler, PhysicalMapping};
 use alloc::rc::Rc;
 use core::ptr::NonNull;
@@ -20,10 +17,10 @@ impl AcpiHandler for Handler {
         physical_address: usize,
         size: usize,
     ) -> PhysicalMapping<Self, T> {
+        log::debug!("Map: {:#X}:{:#X}", physical_address, size);
+
         let mut allocator = self.allocator.lock();
         let mut mapper = self.mapper.lock();
-
-        println!("Map: {:#X}:{:#X}", physical_address, size);
 
         match identity_map(
             physical_address as u64,
@@ -34,7 +31,9 @@ impl AcpiHandler for Handler {
         ) {
             Ok(()) => (),
             // TODO: Emit warning
-            Err(MapToError::PageAlreadyMapped(_)) => (),
+            Err(MapToError::PageAlreadyMapped(_)) => {
+                log::warn!("Already mapped: {:#X}", physical_address)
+            },
             Err(e) => panic!("{:#?}", e),
         }
 
@@ -47,17 +46,19 @@ impl AcpiHandler for Handler {
         }
     }
 
-    fn unmap_physical_region<T>(&self, _region: &PhysicalMapping<Self, T>) {
+    fn unmap_physical_region<T>(&self, region: &PhysicalMapping<Self, T>) {
+        log::debug!(
+            "Unmap: {:#X}:{:#X}",
+            region.physical_start,
+            region.mapped_length
+        );
+
         // TODO: Reenable this
         // The acpi crate doesn't worry about pages and will map addresses that
         // contain other mapped addresses invalidating them and causing
         // a page fault
-        /* let mut mapper = self.mapper.lock();
-
-        println!(
-            "Unmap: {:#X}:{:#X}",
-            region.physical_start, region.mapped_length
-        );
+        /*
+        let mut mapper = self.mapper.lock();
 
         unsafe {
             identity_unmap(
@@ -65,6 +66,7 @@ impl AcpiHandler for Handler {
                 region.mapped_length as u64,
                 &mut *mapper,
             );
-        } */
+        }
+        */
     }
 }
