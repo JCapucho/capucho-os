@@ -5,15 +5,16 @@ authors = [""]
 edition = "2018"
 
 [dependencies]
-bootloader = { version = "0.9.8", features = ["map_physical_memory"] }
-volatile = "0.2.6"
-spin = "0.5.2"
-x86_64 = "0.12.1"
-uart_16550 = "0.2.0"
-pic8259_simple = "0.2.0"
-pc-keyboard = "0.5.0"
-linked_list_allocator = "0.8.0"
+bootloader = { version = "0.9", features = ["map_physical_memory"] }
+volatile = "0.2"
+spin = "0.7"
+x86_64 = "0.12"
+uart_16550 = "0.2"
+pic8259_simple = "0.2"
+pc-keyboard = "0.5"
+linked_list_allocator = "0.8"
 pci_types = "0.2"
+acpi = "2.0"
 
 [dependencies.lazy_static]
 version = "1.0"

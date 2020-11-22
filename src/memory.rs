@@ -1,6 +1,9 @@
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 use x86_64::{
-    structures::paging::{FrameAllocator, OffsetPageTable, PageTable, PhysFrame, Size4KiB},
+    structures::paging::{
+        mapper::MapToError, FrameAllocator, Mapper, OffsetPageTable, Page, PageTable,
+        PageTableFlags, PhysFrame, Size4KiB,
+    },
     PhysAddr, VirtAddr,
 };
 
@@ -31,6 +34,33 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut
     let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
 
     &mut *page_table_ptr // unsafe
+}
+
+#[track_caller]
+pub unsafe fn identity_map(
+    addr: u64,
+    size: u64,
+    flags: PageTableFlags,
+    mapper: &mut impl Mapper<Size4KiB>,
+    allocator: &mut impl FrameAllocator<Size4KiB>,
+) -> Result<(), MapToError<Size4KiB>> {
+    let start = PhysFrame::containing_address(PhysAddr::new(addr));
+    let end = PhysFrame::containing_address(PhysAddr::new(addr + size - 1));
+
+    for frame in PhysFrame::range_inclusive(start, end) {
+        mapper.identity_map(frame, flags, allocator)?.flush()
+    }
+
+    Ok(())
+}
+
+pub unsafe fn identity_unmap(addr: u64, size: u64, mapper: &mut impl Mapper<Size4KiB>) {
+    let start = Page::containing_address(VirtAddr::new(addr));
+    let end = Page::containing_address(VirtAddr::new(addr + size - 1));
+
+    for page in Page::range_inclusive(start, end) {
+        mapper.unmap(page).unwrap().1.flush();
+    }
 }
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory

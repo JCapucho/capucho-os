@@ -1,7 +1,7 @@
 use crate::{gdt, hlt_loop, print, println};
+use core::fmt::{self, Display};
 use lazy_static::lazy_static;
 use pic8259_simple::ChainedPics;
-use spin;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 pub const PIC_1_OFFSET: u8 = 32;
@@ -54,8 +54,30 @@ extern "x86-interrupt" fn page_fault_handler(
     println!("EXCEPTION: PAGE FAULT");
     println!("Accessed Address: {:?}", Cr2::read());
     println!("Error Code: {:?}", error_code);
-    println!("{:#?}", stack_frame);
+    println!("{}", stack_frame_display(stack_frame));
     hlt_loop();
+}
+
+fn stack_frame_display<'a>(frame: &'a InterruptStackFrame) -> impl Display + 'a {
+    struct FrameDisplay<'a>(&'a InterruptStackFrame);
+
+    impl<'a> Display for FrameDisplay<'a> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            use x86_64::registers::rflags::RFlags;
+
+            writeln!(f, "IP: {:#X}", self.0.instruction_pointer.as_u64())?;
+            writeln!(f, "CS: {:#X}", self.0.code_segment)?;
+            writeln!(f, "SP: {:#X}", self.0.stack_pointer.as_u64())?;
+            writeln!(f, "SS: {:#X}", self.0.stack_segment)?;
+            write!(
+                f,
+                "RFLAGS: {:?}",
+                RFlags::from_bits_truncate(self.0.cpu_flags)
+            )
+        }
+    }
+
+    FrameDisplay(frame)
 }
 
 extern "x86-interrupt" fn double_fault_handler(

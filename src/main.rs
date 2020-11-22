@@ -6,9 +6,11 @@
 
 extern crate alloc;
 
+use alloc::rc::Rc;
 use bootloader::{entry_point, BootInfo};
 use capucho_os::println;
 use core::panic::PanicInfo;
+use spin::Mutex;
 
 entry_point!(kernel_main);
 
@@ -27,6 +29,23 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
 
     allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
+
+    let acpi_handler = capucho_os::acpi::Handler {
+        allocator: Rc::new(Mutex::new(frame_allocator)),
+        mapper: Rc::new(Mutex::new(mapper)),
+    };
+    let acpi_tables = unsafe { acpi::AcpiTables::search_for_rsdp_bios(acpi_handler) }.unwrap();
+
+    let platform_info = acpi_tables.platform_info().unwrap();
+
+    println!("Interrupt model: {:?}", platform_info.interrupt_model);
+    if let Some(ref processor_info) = platform_info.processor_info {
+        println!("Boot processor: {:?}", processor_info.boot_processor);
+        println!(
+            "{} Ap processors",
+            processor_info.application_processors.len()
+        );
+    }
 
     let devices = capucho_os::pci::brute_force_find();
 
