@@ -4,7 +4,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(const_mut_refs)]
-#![feature(const_in_array_repeat_expressions)]
+#![feature(const_maybe_uninit_assume_init)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
