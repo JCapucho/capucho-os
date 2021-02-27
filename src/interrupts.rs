@@ -58,7 +58,7 @@ extern "x86-interrupt" fn page_fault_handler(
     hlt_loop();
 }
 
-fn stack_frame_display<'a>(frame: &'a InterruptStackFrame) -> impl Display + 'a {
+fn stack_frame_display(frame: &InterruptStackFrame) -> impl Display + '_ {
     struct FrameDisplay<'a>(&'a InterruptStackFrame);
 
     impl<'a> Display for FrameDisplay<'a> {

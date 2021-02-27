@@ -34,9 +34,7 @@ impl ConfigRegionAccess for ConfigSpaceMechanism1 {
 
             unsafe { address_port.write(config_address.0 | (offset as u32) & 0xff) };
 
-            let res = unsafe { data_port.read() };
-
-            res
+            unsafe { data_port.read() }
         }
 
         read_inner(address, offset)

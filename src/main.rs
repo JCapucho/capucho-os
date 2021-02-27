@@ -6,11 +6,9 @@
 
 extern crate alloc;
 
-use alloc::rc::Rc;
 use bootloader::{entry_point, BootInfo};
 use capucho_os::println;
 use core::panic::PanicInfo;
-use spin::Mutex;
 
 entry_point!(kernel_main);
 
@@ -21,7 +19,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     };
     use x86_64::VirtAddr;
 
-    println!("Hello World{}", "!");
+    println!("Hello World!");
     capucho_os::init();
 
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
@@ -30,10 +28,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
 
-    let acpi_handler = capucho_os::acpi::Handler {
-        allocator: Rc::new(Mutex::new(frame_allocator)),
-        mapper: Rc::new(Mutex::new(mapper)),
-    };
+    let acpi_handler = capucho_os::acpi::LockedHandler::new(&mut frame_allocator, &mut mapper);
     let acpi_tables = unsafe { acpi::AcpiTables::search_for_rsdp_bios(acpi_handler) }.unwrap();
 
     let platform_info = acpi_tables.platform_info().unwrap();

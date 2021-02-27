@@ -1,13 +1,16 @@
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 use x86_64::{
     structures::paging::{
-        mapper::MapToError, FrameAllocator, Mapper, OffsetPageTable, Page, PageTable,
-        PageTableFlags, PhysFrame, Size4KiB,
+        mapper::{MapToError, UnmapError},
+        FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
+        Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
 
 /// Initialize a new OffsetPageTable.
+///
+/// # Safety
 ///
 /// This function is unsafe because the caller must guarantee that the
 /// complete physical memory is mapped to virtual memory at the passed
@@ -19,6 +22,8 @@ pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static>
 }
 
 /// Returns a mutable reference to the active level 4 table.
+///
+/// # Safety
 ///
 /// This function is unsafe because the caller must guarantee that the
 /// complete physical memory is mapped to virtual memory at the passed
@@ -36,31 +41,36 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut
     &mut *page_table_ptr // unsafe
 }
 
+/// Identity maps a frame
+///
+/// # Safety
+///
+/// This function is unsafe because the caller must guarantee that the
+/// frame is free and is usable
 #[track_caller]
 pub unsafe fn identity_map(
-    addr: u64,
-    size: u64,
+    frame: PhysFrame,
     flags: PageTableFlags,
     mapper: &mut impl Mapper<Size4KiB>,
     allocator: &mut impl FrameAllocator<Size4KiB>,
 ) -> Result<(), MapToError<Size4KiB>> {
-    let start = PhysFrame::containing_address(PhysAddr::new(addr));
-    let end = PhysFrame::containing_address(PhysAddr::new(addr + size - 1));
-
-    for frame in PhysFrame::range_inclusive(start, end) {
-        mapper.identity_map(frame, flags, allocator)?.flush()
-    }
-
-    Ok(())
+    mapper
+        .identity_map(frame, flags, allocator)
+        .map(|v| v.flush())
 }
 
-pub unsafe fn identity_unmap(addr: u64, size: u64, mapper: &mut impl Mapper<Size4KiB>) {
-    let start = Page::containing_address(VirtAddr::new(addr));
-    let end = Page::containing_address(VirtAddr::new(addr + size - 1));
-
-    for page in Page::range_inclusive(start, end) {
-        mapper.unmap(page).unwrap().1.flush();
-    }
+/// Identity unmaps a frame
+///
+/// # Safety
+///
+/// This function is unsafe because it might cause pointers to point to unmapped
+/// memory
+pub unsafe fn identity_unmap(
+    frame: PhysFrame,
+    mapper: &mut impl Mapper<Size4KiB>,
+) -> Result<(), UnmapError> {
+    let page = Page::from_start_address(VirtAddr::new(frame.start_address().as_u64())).unwrap();
+    mapper.unmap(page).map(|v| v.1.flush())
 }
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory
@@ -72,6 +82,8 @@ pub struct BootInfoFrameAllocator {
 
 impl BootInfoFrameAllocator {
     /// Create a FrameAllocator from the passed memory map.
+    ///
+    /// # Safety
     ///
     /// This function is unsafe because the caller must guarantee that the
     /// passed memory map is valid. The main requirement is that all frames
