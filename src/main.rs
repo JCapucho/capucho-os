@@ -78,6 +78,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     println!("{}", info);
+    log::error!("{}", info);
     capucho_os::hlt_loop();
 }
 
