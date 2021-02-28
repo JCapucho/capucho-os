@@ -14,6 +14,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aml"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45c1b12889aa22efe6fddefa6f729e21dc60e75ea66c66edc7bcefba51935a0a"
+dependencies = [
+ "bit_field 0.10.1",
+ "byteorder",
+ "log",
+]
+
+[[package]]
 name = "bit_field"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -47,17 +58,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "byteorder"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae44d1a3d5a19df61dd0c8beb138458ac2a53a7ac09eba97d55592540004306b"
+
+[[package]]
 name = "capucho_os"
 version = "0.1.0"
 dependencies = [
  "acpi",
+ "aml",
  "bootloader",
  "buddy_system_allocator",
  "lazy_static",
  "log",
  "pc-keyboard",
  "pci_types",
- "pic8259_simple",
  "spin 0.7.1",
  "uart_16550",
  "volatile",
@@ -69,12 +86,6 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
-
-[[package]]
-name = "cpuio"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d531514efb06912141fa65967447de805691b685a7565c87d1765afe34a98aa7"
 
 [[package]]
 name = "lazy_static"
@@ -107,15 +118,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0543761ad4cb3a4aa1ad9d3082cb40253e69b2ec288dbd4bcb4492e8de6fb07"
 dependencies = [
  "bit_field 0.10.1",
-]
-
-[[package]]
-name = "pic8259_simple"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af2a5497fb8e59bf8015f67b7dff238d75ef445e03f23edac24ac3a8f09be952"
-dependencies = [
- "cpuio",
 ]
 
 [[package]]

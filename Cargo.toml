@@ -9,11 +9,11 @@ volatile = "0.2.7"
 spin = "0.7.1"
 x86_64 = "0.13.2"
 uart_16550 = "0.2.12"
-pic8259_simple = "0.2.0"
 pc-keyboard = "0.5.1"
 buddy_system_allocator = "0.7.0"
 pci_types = "0.2.0"
 acpi = "2.2.0"
+aml = "0.10.0"
 log = "0.4.14"
 
 [dependencies.lazy_static]

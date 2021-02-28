@@ -1,12 +1,20 @@
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+use spin::{Mutex, Once};
 use x86_64::{
     structures::paging::{
-        mapper::{MapToError, UnmapError},
+        mapper::{MapToError, MapperFlush, UnmapError},
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
         Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
+
+pub struct PagingContext {
+    pub mapper: OffsetPageTable<'static>,
+    pub allocator: BootInfoFrameAllocator,
+}
+
+pub static PAGING_CTX: Once<Mutex<PagingContext>> = Once::new();
 
 /// Initialize a new OffsetPageTable.
 ///
@@ -51,26 +59,46 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr) -> &'static mut
 pub unsafe fn identity_map(
     frame: PhysFrame,
     flags: PageTableFlags,
-    mapper: &mut impl Mapper<Size4KiB>,
-    allocator: &mut impl FrameAllocator<Size4KiB>,
 ) -> Result<(), MapToError<Size4KiB>> {
-    mapper
-        .identity_map(frame, flags, allocator)
+    let ctx = &mut *PAGING_CTX.get().unwrap().lock();
+
+    ctx.mapper
+        .identity_map(frame, flags, &mut ctx.allocator)
         .map(|v| v.flush())
 }
 
 /// Identity unmaps a frame
-///
-/// # Safety
-///
-/// This function is unsafe because it might cause pointers to point to unmapped
-/// memory
-pub unsafe fn identity_unmap(
-    frame: PhysFrame,
-    mapper: &mut impl Mapper<Size4KiB>,
-) -> Result<(), UnmapError> {
+pub fn identity_unmap(frame: PhysFrame) -> Result<(), UnmapError> {
+    let mut ctx = PAGING_CTX.get().unwrap().lock();
+
     let page = Page::from_start_address(VirtAddr::new(frame.start_address().as_u64())).unwrap();
-    mapper.unmap(page).map(|v| v.1.flush())
+    ctx.mapper
+        .unmap(page)
+        .map(|v: (_, MapperFlush<Size4KiB>)| v.1.flush())
+}
+
+/// Maps a page range
+#[track_caller]
+pub fn map_range(
+    range: impl Iterator<Item = Page>,
+    flags: PageTableFlags,
+) -> Result<(), MapToError<Size4KiB>> {
+    let ctx = &mut *PAGING_CTX.get().unwrap().lock();
+
+    for page in range {
+        let frame = ctx
+            .allocator
+            .allocate_frame()
+            .ok_or(MapToError::FrameAllocationFailed)?;
+
+        unsafe {
+            ctx.mapper
+                .map_to(page, frame, flags, &mut ctx.allocator)?
+                .flush()
+        };
+    }
+
+    Ok(())
 }
 
 /// A FrameAllocator that returns usable frames from the bootloader's memory

@@ -1,45 +1,49 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
+#![feature(asm)]
 #![test_runner(capucho_os::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
 
 use bootloader::{entry_point, BootInfo};
-use capucho_os::println;
+use capucho_os::{apic, println};
 use core::panic::PanicInfo;
 
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    use capucho_os::{
-        allocator,
-        memory::{self, BootInfoFrameAllocator},
-    };
-    use x86_64::VirtAddr;
-
     println!("Hello World!");
-    capucho_os::init();
+    capucho_os::init(boot_info);
 
-    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
-
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("heap initialization failed");
-
-    let acpi_handler = capucho_os::acpi::LockedHandler::new(&mut frame_allocator, &mut mapper);
-    let acpi_tables = unsafe { acpi::AcpiTables::search_for_rsdp_bios(acpi_handler) }.unwrap();
-
+    let (acpi_tables, mut aml_context) = unsafe { capucho_os::acpi::bios_get_acpi() };
     let platform_info = acpi_tables.platform_info().unwrap();
 
-    log::info!("Interrupt model: {:#?}", platform_info.interrupt_model);
-    if let Some(ref processor_info) = platform_info.processor_info {
-        log::info!("Boot processor: {:?}", processor_info.boot_processor);
+    aml_context
+        .namespace
+        .traverse(|name, _| {
+            log::info!("{}", name);
+            Ok(true)
+        })
+        .unwrap();
 
-        for ap_processor in processor_info.application_processors.iter() {
-            log::info!("Application processor: {:?}", ap_processor);
-        }
+    match platform_info.interrupt_model {
+        acpi::InterruptModel::Unknown => (),
+        acpi::InterruptModel::Apic(apic) => {
+            unsafe { apic::lapic_handover(apic.local_apic_address) };
+
+            let ioapic = unsafe { apic::IOApic::new(apic.io_apics[0].address as u64) };
+
+            // Set keyboard interrupt
+            let mut entry = ioapic.redir_entry(1);
+
+            entry.set_vector(33);
+            entry.set_masked(false);
+
+            ioapic.set_redir_entry(1, entry);
+        },
+        _ => unreachable!(),
     }
 
     let devices = capucho_os::pci::brute_force_find();

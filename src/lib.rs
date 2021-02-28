@@ -8,11 +8,19 @@
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-extern crate alloc;
+#[cfg(test)]
+use bootloader::entry_point;
+use bootloader::BootInfo;
 use core::panic::PanicInfo;
+use memory::{BootInfoFrameAllocator, PagingContext};
+use spin::Mutex;
+use x86_64::VirtAddr;
+
+extern crate alloc;
 
 pub mod acpi;
 pub mod allocator;
+pub mod apic;
 pub mod gdt;
 pub mod interrupts;
 pub mod logger;
@@ -21,15 +29,25 @@ pub mod pci;
 pub mod serial;
 pub mod vga_buffer;
 
-pub fn init() {
+pub fn init(boot_info: &'static BootInfo) {
     gdt::init();
     interrupts::init_idt();
-    unsafe { interrupts::PICS.lock().initialize() };
+    unsafe { interrupts::PICS.lock().init() };
     x86_64::instructions::interrupts::enable();
 
     // Setup logger
     log::set_logger(&logger::Logger).unwrap();
     log::set_max_level(log::LevelFilter::Debug);
+
+    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+
+    // Setup memory and heap
+    let mapper = unsafe { memory::init(phys_mem_offset) };
+    let allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
+
+    memory::PAGING_CTX.call_once(|| Mutex::new(PagingContext { mapper, allocator }));
+
+    allocator::init_heap().expect("heap initialization failed");
 }
 
 pub trait Testable {
@@ -85,15 +103,12 @@ pub fn hlt_loop() -> ! {
 }
 
 #[cfg(test)]
-use bootloader::{entry_point, BootInfo};
-
-#[cfg(test)]
 entry_point!(test_kernel_main);
 
 /// Entry point for `cargo xtest`
 #[cfg(test)]
-fn test_kernel_main(_boot_info: &'static BootInfo) -> ! {
-    init();
+fn test_kernel_main(boot_info: &'static BootInfo) -> ! {
+    init(boot_info);
     test_main();
     hlt_loop();
 }

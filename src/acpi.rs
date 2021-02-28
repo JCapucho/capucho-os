@@ -1,124 +1,141 @@
-use crate::memory::{identity_map, identity_unmap, BootInfoFrameAllocator};
-use acpi::{AcpiHandler, PhysicalMapping};
-use alloc::{collections::BTreeMap, rc::Rc};
-use core::ptr::NonNull;
+use crate::memory::identity_map;
+use acpi::AcpiTables;
+use alloc::{boxed::Box, collections::BTreeMap, rc::Rc};
+use aml::AmlContext;
 use spin::Mutex;
 use x86_64::{
-    structures::paging::{OffsetPageTable, PageTableFlags, PhysFrame},
+    structures::paging::{PageTableFlags, PhysFrame},
     PhysAddr,
 };
 
+mod handlers;
+
 #[derive(Clone)]
-pub struct LockedHandler<'a> {
-    inner: Rc<Mutex<Handler<'a>>>,
+pub struct LockedHandler {
+    inner: Rc<Mutex<Handler>>,
 }
 
-impl<'a> LockedHandler<'a> {
-    pub fn new(
-        allocator: &'a mut BootInfoFrameAllocator,
-        mapper: &'a mut OffsetPageTable<'static>,
-    ) -> Self {
-        let inner = Handler::new(allocator, mapper);
+impl LockedHandler {
+    unsafe fn map(&self, frame: PhysFrame) {
+        let inner = &mut *self.inner.lock();
 
+        inner.map(frame)
+    }
+
+    unsafe fn read<T>(&self, address: usize) -> T {
+        self.map(PhysFrame::containing_address(PhysAddr::new(address as u64)));
+        (address as *const T).read_volatile()
+    }
+
+    unsafe fn write<T>(&self, address: usize, value: T) {
+        self.map(PhysFrame::containing_address(PhysAddr::new(address as u64)));
+        (address as *mut T).write_volatile(value)
+    }
+}
+
+impl Default for LockedHandler {
+    fn default() -> Self {
         LockedHandler {
-            inner: Rc::new(Mutex::new(inner)),
+            inner: Rc::new(Mutex::new(Handler::new())),
         }
     }
 }
 
-struct Handler<'a> {
-    allocator: &'a mut BootInfoFrameAllocator,
-    mapper: &'a mut OffsetPageTable<'static>,
+struct Handler {
     mapping_refs: BTreeMap<u64, usize>,
 }
 
-impl<'a> Handler<'a> {
-    fn new(
-        allocator: &'a mut BootInfoFrameAllocator,
-        mapper: &'a mut OffsetPageTable<'static>,
-    ) -> Self {
+impl Handler {
+    fn new() -> Self {
         Handler {
-            allocator,
-            mapper,
             mapping_refs: BTreeMap::new(),
         }
     }
-}
 
-impl<'a> AcpiHandler for LockedHandler<'a> {
-    unsafe fn map_physical_region<T>(
-        &self,
-        physical_address: usize,
-        size: usize,
-    ) -> PhysicalMapping<Self, T> {
-        log::debug!("Map: {:#X}:{:#X}", physical_address, size);
+    fn map(&mut self, frame: PhysFrame) {
+        let entry = self
+            .mapping_refs
+            .entry(frame.start_address().as_u64())
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
 
-        let handler = &mut *self.inner.lock();
+        if *entry != 1 {
+            return;
+        }
 
-        let start = PhysFrame::containing_address(PhysAddr::new(physical_address as u64));
-        let end = PhysFrame::containing_address(PhysAddr::new((physical_address + size) as u64));
-
-        for frame in PhysFrame::range_inclusive(start, end) {
-            let entry = handler
-                .mapping_refs
-                .entry(frame.start_address().as_u64())
-                .and_modify(|e| *e += 1)
-                .or_insert(1);
-
-            if *entry != 1 {
-                continue;
-            }
-
+        unsafe {
             identity_map(
                 frame,
-                PageTableFlags::PRESENT,
-                handler.mapper,
-                handler.allocator,
+                PageTableFlags::PRESENT
+                    | PageTableFlags::WRITABLE
+                    | PageTableFlags::NO_CACHE
+                    | PageTableFlags::WRITE_THROUGH,
             )
-            .expect("Failed to identity map");
-        }
-
-        let mapped_length =
-            (end.start_address().as_u64() + 0x1000 - start.start_address().as_u64()) as usize;
-
-        PhysicalMapping {
-            physical_start: start.start_address().as_u64() as usize,
-            virtual_start: NonNull::new_unchecked(physical_address as *mut _),
-            region_length: size,
-            mapped_length,
-            handler: self.clone(),
-        }
+            .expect("Failed to identity map")
+        };
     }
+}
 
-    fn unmap_physical_region<T>(&self, region: &PhysicalMapping<Self, T>) {
-        log::debug!(
-            "Unmap: {:#X}:{:#X}",
-            region.physical_start,
-            region.mapped_length
+/// # Safety
+/// The system must be using bios
+pub unsafe fn bios_get_acpi() -> (AcpiTables<LockedHandler>, AmlContext) {
+    fn inner() -> (AcpiTables<LockedHandler>, AmlContext) {
+        let acpi_handler = LockedHandler::default();
+
+        log::debug!("Reading the acpi tables");
+
+        let acpi_tables =
+            unsafe { acpi::AcpiTables::search_for_rsdp_bios(acpi_handler.clone()) }.unwrap();
+
+        let mut aml_context = aml::AmlContext::new(
+            Box::new(acpi_handler.clone()),
+            false,
+            aml::DebugVerbosity::All,
         );
 
-        let handler = &mut *self.inner.lock();
+        log::debug!("Reading the dsdt");
 
-        let start =
-            PhysFrame::from_start_address(PhysAddr::new(region.physical_start as u64)).unwrap();
-        let end = PhysFrame::from_start_address(PhysAddr::new(
-            (region.physical_start + region.mapped_length) as u64,
-        ))
-        .unwrap();
+        if let Some(ref dsdt) = acpi_tables.dsdt {
+            let start = PhysFrame::containing_address(PhysAddr::new(dsdt.address as u64));
+            let end = PhysFrame::containing_address(PhysAddr::new(
+                dsdt.address as u64 + dsdt.length as u64,
+            ));
 
-        for frame in PhysFrame::range(start, end) {
-            let entry = handler
-                .mapping_refs
-                .get_mut(&frame.start_address().as_u64())
-                .expect("Trying to unmap non mapped frame");
-
-            *entry -= 1;
-
-            if *entry == 0 {
-                unsafe {
-                    identity_unmap(frame, handler.mapper).expect("Failed to identity map");
-                }
+            for frame in PhysFrame::range_inclusive(start, end) {
+                unsafe { acpi_handler.map(frame) }
             }
+            let stream = unsafe {
+                core::slice::from_raw_parts(dsdt.address as *const _, dsdt.length as usize)
+            };
+
+            aml_context
+                .parse_table(stream)
+                .expect("Failed to parse the dsdt");
         }
+
+        for ssdt in acpi_tables.ssdts.iter() {
+            log::debug!("Reading a ssdt");
+
+            let start = PhysFrame::containing_address(PhysAddr::new(ssdt.address as u64));
+            let end = PhysFrame::containing_address(PhysAddr::new(
+                ssdt.address as u64 + ssdt.length as u64,
+            ));
+
+            for frame in PhysFrame::range_inclusive(start, end) {
+                unsafe { acpi_handler.map(frame) }
+            }
+
+            let stream = unsafe {
+                core::slice::from_raw_parts(ssdt.address as *const _, ssdt.length as usize)
+            };
+
+            aml_context
+                .parse_table(stream)
+                .expect("Failed to parse the dsdt");
+        }
+
+        (acpi_tables, aml_context)
     }
+
+    inner()
 }
