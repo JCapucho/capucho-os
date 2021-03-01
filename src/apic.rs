@@ -1,4 +1,6 @@
-use crate::{interrupts, memory::identity_map};
+use crate::{acpi::Acpi, interrupts, memory::identity_map};
+use acpi::platform::Apic;
+use aml::{value::Args, AmlName, AmlValue};
 use core::fmt;
 use x86_64::{
     structures::paging::{PageTableFlags, PhysFrame},
@@ -7,7 +9,7 @@ use x86_64::{
 
 /// # Safety
 /// The provided `base_address` must be valid
-pub unsafe fn lapic_handover(base_address: u64) {
+unsafe fn lapic_handover(base_address: u64) {
     identity_map(
         PhysFrame::from_start_address(PhysAddr::new(base_address)).unwrap(),
         PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
@@ -15,6 +17,59 @@ pub unsafe fn lapic_handover(base_address: u64) {
     .expect("Failed to identity map");
 
     interrupts::PICS.lock().apic_handover(base_address);
+}
+
+/// Hands over control from the pic to the apic and the ioapic
+pub fn apic_init(acpi: &mut Acpi, apic: Apic) {
+    pub fn inner(acpi: &mut Acpi, apic: Apic) {
+        let args = Args {
+            // 0 – PIC mode
+            // 1 – APIC mode
+            // 2 – SAPIC mode
+            // Other values – Reserved
+            arg_0: Some(AmlValue::Integer(1)),
+            ..Default::default()
+        };
+
+        // Ignore the result since the method might not exist
+        let _ = acpi
+            .aml_context()
+            .invoke_method(&AmlName::from_str("\\_PIC").unwrap(), args);
+
+        unsafe { lapic_handover(apic.local_apic_address) };
+
+        let timer_irq = apic
+            .interrupt_source_overrides
+            .iter()
+            .find_map(|v| Some(v.global_system_interrupt).filter(|_| v.isa_source == 0))
+            .unwrap_or(0) as u8;
+
+        let keyboard_irq = apic
+            .interrupt_source_overrides
+            .iter()
+            .find_map(|v| Some(v.global_system_interrupt).filter(|_| v.isa_source == 1))
+            .unwrap_or(1) as u8;
+
+        let ioapic = unsafe { IOApic::new(apic.io_apics[0].address as u64) };
+
+        // Set timer interrupt
+        let mut entry = ioapic.redir_entry(timer_irq);
+
+        entry.set_vector(32);
+        entry.set_masked(false);
+
+        ioapic.set_redir_entry(timer_irq, entry);
+
+        // Set keyboard interrupt
+        let mut entry = ioapic.redir_entry(keyboard_irq);
+
+        entry.set_vector(33);
+        entry.set_masked(false);
+
+        ioapic.set_redir_entry(keyboard_irq, entry);
+    }
+
+    inner(acpi, apic)
 }
 
 pub struct IOApic(u64);
@@ -53,6 +108,10 @@ impl IOApic {
     }
 
     pub fn redir_entry(&self, idx: u8) -> RedirEntry {
+        if idx >= self.redir_entry_count() {
+            panic!("Out of bounds")
+        }
+
         let low = unsafe { self.read_reg(0x10 + idx * 2) } as u64;
         let high = unsafe { self.read_reg(0x11 + idx * 2) } as u64;
 

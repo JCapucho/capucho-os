@@ -14,7 +14,7 @@ use bootloader::BootInfo;
 use core::panic::PanicInfo;
 use memory::{BootInfoFrameAllocator, PagingContext};
 use spin::Mutex;
-use x86_64::VirtAddr;
+use x86_64::{structures::port::PortWrite, VirtAddr};
 
 extern crate alloc;
 
@@ -35,19 +35,37 @@ pub fn init(boot_info: &'static BootInfo) {
     unsafe { interrupts::PICS.lock().init() };
     x86_64::instructions::interrupts::enable();
 
+    // Setup the pit for 1ms tick
+    pit_init();
+
     // Setup logger
     log::set_logger(&logger::Logger).unwrap();
     log::set_max_level(log::LevelFilter::Debug);
 
+    // Setup memory and heap
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
 
-    // Setup memory and heap
     let mapper = unsafe { memory::init(phys_mem_offset) };
     let allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
 
     memory::PAGING_CTX.call_once(|| Mutex::new(PagingContext { mapper, allocator }));
 
     allocator::init_heap().expect("heap initialization failed");
+}
+
+fn pit_init() {
+    const DIVISOR: u16 = 1193; // 1193182 / 1193 ≃ 1000
+    unsafe {
+        u8::write_to_port(0x43, 0b00110100);
+        u8::write_to_port(0x40, DIVISOR as u8);
+        u8::write_to_port(0x40, (DIVISOR >> 8) as u8);
+    }
+}
+
+pub fn sleep(miliseconds: u64) {
+    for _ in 0..miliseconds {
+        x86_64::instructions::hlt()
+    }
 }
 
 pub trait Testable {
