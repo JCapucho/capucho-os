@@ -141,6 +141,14 @@ pub unsafe fn bios_get_acpi() -> Acpi {
                 .expect("Failed to parse the dsdt");
         }
 
+        log::trace!("Starting the aml objects init");
+
+        aml_context
+            .initialize_objects()
+            .expect("Failed to init the aml objects");
+
+        log::trace!("Finished the aml objects init");
+
         let fadt: &Fadt = unsafe {
             &tables
                 .get_sdt::<Fadt>(Signature::FADT)

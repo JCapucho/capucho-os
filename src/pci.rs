@@ -1,66 +1,61 @@
 use alloc::vec::Vec;
 use pci_types::{ConfigRegionAccess, PciAddress, PciHeader};
-use x86_64::instructions::port::Port;
+use x86_64::instructions::port::{PortRead, PortWrite};
 
 const CONFIG_ADDRESS: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
+
+pub unsafe fn read(address: pci_types::PciAddress, offset: u16) -> u32 {
+    fn read_inner(address: pci_types::PciAddress, offset: u16) -> u32 {
+        if (offset & 0b11) != 0 {
+            panic!("Try to read pci with unaligned offset")
+        }
+
+        let config_address: ConfigAddress = address.into();
+
+        unsafe { u32::write_to_port(CONFIG_ADDRESS, config_address.0 | (offset as u32) & 0xff) };
+
+        unsafe { u32::read_from_port(CONFIG_DATA) }
+    }
+
+    read_inner(address, offset)
+}
+
+pub unsafe fn write(address: pci_types::PciAddress, offset: u16, value: u32) {
+    fn write_inner(address: pci_types::PciAddress, offset: u16, value: u32) {
+        if (offset & 0b11) != 0 {
+            panic!("Try to write pci with unaligned offset")
+        }
+
+        let config_address: ConfigAddress = address.into();
+
+        unsafe { u32::write_to_port(CONFIG_ADDRESS, config_address.0 | (offset as u32) & 0xff) };
+
+        unsafe { u32::write_to_port(CONFIG_DATA, value) }
+    }
+
+    write_inner(address, offset, value)
+}
 
 pub struct ConfigSpaceMechanism1;
 
 impl ConfigRegionAccess for ConfigSpaceMechanism1 {
     fn function_exists(&self, address: pci_types::PciAddress) -> bool {
-        let mut address_port = Port::<u32>::new(CONFIG_ADDRESS);
-        let mut data_port = Port::<u32>::new(CONFIG_DATA);
-
-        let config_address: ConfigAddress = address.into();
-
-        unsafe { address_port.write(config_address.0) };
-
-        let vendor = unsafe { data_port.read() } & 0xffff;
+        let vendor = unsafe { self.read(address, 0) & 0xFFFF };
 
         vendor != 0xFFFF
     }
 
     unsafe fn read(&self, address: pci_types::PciAddress, offset: u16) -> u32 {
-        fn read_inner(address: pci_types::PciAddress, offset: u16) -> u32 {
-            if (offset & 0b11) != 0 {
-                panic!("Try to read pci with unaligned offset")
-            }
-
-            let mut address_port = Port::<u32>::new(CONFIG_ADDRESS);
-            let mut data_port = Port::<u32>::new(CONFIG_DATA);
-
-            let config_address: ConfigAddress = address.into();
-
-            unsafe { address_port.write(config_address.0 | (offset as u32) & 0xff) };
-
-            unsafe { data_port.read() }
-        }
-
-        read_inner(address, offset)
+        read(address, offset)
     }
 
     unsafe fn write(&self, address: pci_types::PciAddress, offset: u16, value: u32) {
-        fn write_inner(address: pci_types::PciAddress, offset: u16, value: u32) {
-            if (offset & 0b11) != 0 {
-                panic!("Try to read pci with unaligned offset")
-            }
-
-            let mut address_port = Port::<u32>::new(CONFIG_ADDRESS);
-            let mut data_port = Port::<u32>::new(CONFIG_DATA);
-
-            let config_address: ConfigAddress = address.into();
-
-            unsafe { address_port.write(config_address.0 | (offset as u32) & 0xff) };
-
-            unsafe { data_port.write(value) };
-        }
-
-        write_inner(address, offset, value)
+        write(address, offset, value)
     }
 }
 
-pub struct ConfigAddress(u32);
+struct ConfigAddress(u32);
 
 impl From<PciAddress> for ConfigAddress {
     fn from(address: PciAddress) -> Self {

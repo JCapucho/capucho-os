@@ -1,7 +1,10 @@
-use crate::{gdt, hlt_loop, print, println};
+use crate::{gdt, hlt_loop, memory, print, println};
 use core::fmt::{self, Display};
 use lazy_static::lazy_static;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
+use x86_64::structures::{
+    idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode},
+    paging::Translate,
+};
 
 use self::controller::InterruptController;
 
@@ -48,10 +51,30 @@ extern "x86-interrupt" fn page_fault_handler(
 ) {
     use x86_64::registers::control::Cr2;
 
+    let addr = Cr2::read();
+
     println!("EXCEPTION: PAGE FAULT");
-    println!("Accessed Address: {:?}", Cr2::read());
+    println!("Accessed Address: {:?}", addr);
     println!("Error Code: {:?}", error_code);
     println!("{}", stack_frame_display(stack_frame));
+
+    if let Some(ctx) = memory::PAGING_CTX.get().and_then(|ctx| ctx.try_lock()) {
+        match ctx.mapper.translate(addr) {
+            x86_64::structures::paging::mapper::TranslateResult::Mapped {
+                frame, flags, ..
+            } => {
+                println!("FRAME: {:#X} ", frame.start_address());
+                println!("FLAGS: {:?} ", flags);
+            },
+            x86_64::structures::paging::mapper::TranslateResult::NotMapped => {
+                println!("NOT MAPPED");
+            },
+            x86_64::structures::paging::mapper::TranslateResult::InvalidFrameAddress(_) => {
+                println!("INVALID PAGE TABLE");
+            },
+        }
+    }
+
     hlt_loop();
 }
 

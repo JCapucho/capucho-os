@@ -1,8 +1,9 @@
 use super::LockedHandler;
-use crate::memory::identity_unmap;
+use crate::{memory::identity_unmap, pci};
 use acpi::{AcpiHandler, PhysicalMapping};
 use aml::Handler as AmlHandler;
 use core::ptr::NonNull;
+use pci_types::PciAddress;
 use x86_64::{
     structures::{
         paging::PhysFrame,
@@ -99,15 +100,18 @@ impl AmlHandler for LockedHandler {
     fn write_io_u32(&self, port: u16, value: u32) { unsafe { u32::write_to_port(port, value) } }
 
     fn read_pci_u8(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16) -> u8 {
-        todo!()
+        let address = PciAddress::new(segment, bus, device, function);
+        unsafe { (pci::read(address, offset & 0xFFFC) >> (offset % 4) * 8) as u8 }
     }
 
     fn read_pci_u16(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16) -> u16 {
-        todo!()
+        let address = PciAddress::new(segment, bus, device, function);
+        unsafe { (pci::read(address, offset & 0xFFFC) >> (offset % 2) * 16) as u16 }
     }
 
     fn read_pci_u32(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16) -> u32 {
-        todo!()
+        let address = PciAddress::new(segment, bus, device, function);
+        unsafe { pci::read(address, offset) }
     }
 
     fn write_pci_u8(
@@ -119,7 +123,8 @@ impl AmlHandler for LockedHandler {
         offset: u16,
         value: u8,
     ) {
-        todo!()
+        let address = PciAddress::new(segment, bus, device, function);
+        unsafe { pci::write(address, offset & 0xFFFC, (value as u32) << (offset % 4) * 8) }
     }
 
     fn write_pci_u16(
@@ -131,7 +136,14 @@ impl AmlHandler for LockedHandler {
         offset: u16,
         value: u16,
     ) {
-        todo!()
+        let address = PciAddress::new(segment, bus, device, function);
+        unsafe {
+            pci::write(
+                address,
+                offset & 0xFFFC,
+                (value as u32) << (offset % 2) * 16,
+            )
+        }
     }
 
     fn write_pci_u32(
@@ -143,6 +155,7 @@ impl AmlHandler for LockedHandler {
         offset: u16,
         value: u32,
     ) {
-        todo!()
+        let address = PciAddress::new(segment, bus, device, function);
+        unsafe { pci::write(address, offset, value) }
     }
 }

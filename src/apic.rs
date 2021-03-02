@@ -21,7 +21,7 @@ unsafe fn lapic_handover(base_address: u64) {
 
 /// Hands over control from the pic to the apic and the ioapic
 pub fn apic_init(acpi: &mut Acpi, apic: Apic) {
-    pub fn inner(acpi: &mut Acpi, apic: Apic) {
+    x86_64::instructions::interrupts::without_interrupts(|| {
         let args = Args {
             // 0 – PIC mode
             // 1 – APIC mode
@@ -67,9 +67,7 @@ pub fn apic_init(acpi: &mut Acpi, apic: Apic) {
         entry.set_masked(false);
 
         ioapic.set_redir_entry(keyboard_irq, entry);
-    }
-
-    inner(acpi, apic)
+    })
 }
 
 pub struct IOApic(u64);

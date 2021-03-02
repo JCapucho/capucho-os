@@ -25,11 +25,15 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         panic!("Failed to init the acpi")
     }
 
+    log::debug!("Apic handover start");
+
     match platform_info.interrupt_model {
         acpi::InterruptModel::Unknown => (),
         acpi::InterruptModel::Apic(apic) => apic::apic_init(&mut acpi, apic),
         _ => unreachable!(),
     }
+
+    log::debug!("Apic handover end");
 
     let devices = capucho_os::pci::brute_force_find();
 
