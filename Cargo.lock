@@ -67,6 +67,7 @@ version = "0.1.0"
 dependencies = [
  "acpi",
  "aml",
+ "bitflags",
  "bootloader",
  "buddy_system_allocator",
  "lazy_static",

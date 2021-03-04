@@ -70,15 +70,17 @@ impl From<PciAddress> for ConfigAddress {
     }
 }
 
-pub fn brute_force_find() -> Vec<(PciAddress, PciHeader)> {
+pub fn brute_force_find(access: &impl ConfigRegionAccess) -> Vec<(PciAddress, PciHeader)> {
     let mut results = Vec::new();
 
     for bus in 0..=255 {
         for device in 0..32 {
-            let address = PciAddress::new(0, bus, device, 0);
+            for function in 0..8 {
+                let address = PciAddress::new(0, bus, device, function);
 
-            if ConfigSpaceMechanism1.function_exists(address) {
-                results.push((address, PciHeader::new(address)))
+                if access.function_exists(address) {
+                    results.push((address, PciHeader::new(address)));
+                }
             }
         }
     }

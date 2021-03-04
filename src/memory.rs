@@ -67,6 +67,23 @@ pub unsafe fn identity_map(
         .map(|v| v.flush())
 }
 
+/// Identity maps a frame for a memory mapped device
+///
+/// # Safety
+///
+/// This function is unsafe because the caller must guarantee that the
+/// frame is free and is usable
+#[track_caller]
+pub unsafe fn identity_map_mmap_dev(frame: PhysFrame) -> Result<(), MapToError<Size4KiB>> {
+    identity_map(
+        frame,
+        PageTableFlags::PRESENT
+            | PageTableFlags::WRITABLE
+            | PageTableFlags::NO_CACHE
+            | PageTableFlags::WRITE_THROUGH,
+    )
+}
+
 /// Identity unmaps a frame
 pub fn identity_unmap(frame: PhysFrame) -> Result<(), UnmapError> {
     let mut ctx = PAGING_CTX.get().unwrap().lock();

@@ -18,7 +18,7 @@ impl AcpiHandler for LockedHandler {
         physical_address: usize,
         size: usize,
     ) -> PhysicalMapping<Self, T> {
-        log::debug!("Map: {:#X}:{:#X}", physical_address, size);
+        log::trace!("Map: {:#X}:{:#X}", physical_address, size);
 
         let start = PhysFrame::containing_address(PhysAddr::new(physical_address as u64));
         let end = PhysFrame::containing_address(PhysAddr::new((physical_address + size) as u64));
@@ -40,7 +40,7 @@ impl AcpiHandler for LockedHandler {
     }
 
     fn unmap_physical_region<T>(&self, region: &PhysicalMapping<Self, T>) {
-        log::debug!(
+        log::trace!(
             "Unmap: {:#X}:{:#X}",
             region.physical_start,
             region.mapped_length

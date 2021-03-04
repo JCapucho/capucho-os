@@ -7,7 +7,7 @@ use x86_64::{
 use crate::memory;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 200 * 1024; // 200 KiB
+pub const HEAP_SIZE: usize = 500 * 1024; // 500 KiB
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::new();

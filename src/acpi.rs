@@ -1,11 +1,11 @@
-use crate::memory::identity_map;
+use crate::memory::identity_map_mmap_dev;
 use acpi::{fadt::Fadt, sdt::Signature, AcpiTables, PlatformInfo};
 use alloc::{boxed::Box, collections::BTreeMap, rc::Rc};
 use aml::{value::Args, AmlContext, AmlName, AmlValue};
 use spin::Mutex;
 use x86_64::{
     structures::{
-        paging::{PageTableFlags, PhysFrame},
+        paging::PhysFrame,
         port::{PortRead, PortWrite},
     },
     PhysAddr,
@@ -74,16 +74,7 @@ impl Handler {
             return;
         }
 
-        unsafe {
-            identity_map(
-                frame,
-                PageTableFlags::PRESENT
-                    | PageTableFlags::WRITABLE
-                    | PageTableFlags::NO_CACHE
-                    | PageTableFlags::WRITE_THROUGH,
-            )
-            .expect("Failed to identity map")
-        };
+        unsafe { identity_map_mmap_dev(frame).expect("Failed to identity map") };
     }
 }
 

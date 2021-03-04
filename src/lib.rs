@@ -4,7 +4,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(const_mut_refs)]
-#![feature(const_maybe_uninit_assume_init)]
+#![feature(const_maybe_uninit_assume_init, maybe_uninit_slice)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
@@ -26,6 +26,7 @@ pub mod interrupts;
 pub mod logger;
 pub mod memory;
 pub mod pci;
+pub mod sata;
 pub mod serial;
 pub mod vga_buffer;
 
@@ -123,7 +124,7 @@ pub fn hlt_loop() -> ! {
 #[cfg(test)]
 entry_point!(test_kernel_main);
 
-/// Entry point for `cargo xtest`
+/// Entry point for `cargo test`
 #[cfg(test)]
 fn test_kernel_main(boot_info: &'static BootInfo) -> ! {
     init(boot_info);

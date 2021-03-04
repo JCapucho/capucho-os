@@ -15,6 +15,7 @@ pci_types = "0.2.0"
 acpi = "2.2.0"
 aml = "0.10.0"
 log = "0.4.14"
+bitflags = "1.2.1"
 
 [dependencies.lazy_static]
 version = "1.4.0"
@@ -25,14 +26,29 @@ version = "0.9.14"
 features = ["map_physical_memory"]
 
 [package.metadata.bootimage]
-run-args = ["-serial", "stdio"]
+run-args = [
+    "-serial",
+    "stdio",
+    "-machine",
+    "type=q35,accel=kvm",
+    "-smp",
+    "2",
+    "-drive",
+    "format=raw,file=hdd.img,index=1,media=disk",
+]
 test-args = [
     "-device",
     "isa-debug-exit,iobase=0xf4,iosize=0x04",
     "-serial",
     "stdio",
     "-display",
-    "none"
+    "none",
+    "-machine",
+    "type=q35,accel=kvm",
+    "-smp",
+    "2",
+    "-drive",
+    "format=raw,file=hdd.img,index=1,media=disk",
 ]
 test-success-exit-code = 33
 
