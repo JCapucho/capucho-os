@@ -8,8 +8,11 @@ all: prepare
 prepare: mount
 	fusermount -u hdd-mnt
 
-mount: | hdd.img
+mount: build | hdd.img
 	fuse-ext2 hdd.img hdd-mnt -o rw+ -o allow_other -o uid=$(UID)
+
+build:
+	cargo build
 
 hdd.img:
 	dd if=/dev/null of=hdd.img bs=1M seek=200

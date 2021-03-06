@@ -1,11 +1,11 @@
-use crate::memory::identity_map_mmap_dev;
+use crate::memory::{mmap_dev, unmap, UnmapGuard};
 use acpi::{fadt::Fadt, sdt::Signature, AcpiTables, PlatformInfo};
 use alloc::{boxed::Box, collections::BTreeMap, rc::Rc};
 use aml::{value::Args, AmlContext, AmlName, AmlValue};
 use spin::Mutex;
 use x86_64::{
     structures::{
-        paging::PhysFrame,
+        paging::{Page, PhysFrame, Size4KiB},
         port::{PortRead, PortWrite},
     },
     PhysAddr,
@@ -27,10 +27,19 @@ impl LockedHandler {
     ///
     /// This function is unsafe because the caller must guarantee that the
     /// frame is free and is usable
+    #[track_caller]
     pub unsafe fn map(&self, frame: PhysFrame) {
         let inner = &mut *self.inner.lock();
 
         inner.map(frame)
+    }
+
+    /// Unmaps a page
+    #[track_caller]
+    pub fn unmap(&self, page: Page<Size4KiB>) {
+        let inner = &mut *self.inner.lock();
+
+        inner.unmap(page)
     }
 
     unsafe fn read<T>(&self, address: usize) -> T {
@@ -53,7 +62,7 @@ impl Default for LockedHandler {
 }
 
 struct Handler {
-    mapping_refs: BTreeMap<u64, usize>,
+    mapping_refs: BTreeMap<u64, (usize, UnmapGuard)>,
 }
 
 impl Handler {
@@ -63,18 +72,33 @@ impl Handler {
         }
     }
 
+    #[track_caller]
     fn map(&mut self, frame: PhysFrame) {
-        let entry = self
-            .mapping_refs
-            .entry(frame.start_address().as_u64())
-            .and_modify(|e| *e += 1)
-            .or_insert(1);
+        let key = frame.start_address().as_u64();
 
-        if *entry != 1 {
-            return;
+        if let Some((ref mut rc, _)) = self.mapping_refs.get_mut(&key) {
+            *rc += 1;
+        } else {
+            let guard = unsafe { mmap_dev(frame, true).expect("Failed to identity map") };
+            self.mapping_refs.insert(key, (1, guard));
         }
+    }
 
-        unsafe { identity_map_mmap_dev(frame).expect("Failed to identity map") };
+    #[track_caller]
+    fn unmap(&mut self, page: Page<Size4KiB>) {
+        let key = page.start_address().as_u64();
+
+        let (ref mut rc, _) = self
+            .mapping_refs
+            .get_mut(&key)
+            .expect("Trying to unmap non mapped frame");
+
+        *rc -= 1;
+
+        if *rc == 0 {
+            let (_, guard) = self.mapping_refs.remove(&key).unwrap();
+            unmap(guard).expect("Failed to unmap");
+        }
     }
 }
 

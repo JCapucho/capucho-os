@@ -1,15 +1,15 @@
 use super::LockedHandler;
-use crate::{memory::identity_unmap, pci};
+use crate::pci;
 use acpi::{AcpiHandler, PhysicalMapping};
 use aml::Handler as AmlHandler;
 use core::ptr::NonNull;
 use pci_types::PciAddress;
 use x86_64::{
     structures::{
-        paging::PhysFrame,
+        paging::{Page, PhysFrame},
         port::{PortRead, PortWrite},
     },
-    PhysAddr,
+    PhysAddr, VirtAddr,
 };
 
 impl AcpiHandler for LockedHandler {
@@ -46,26 +46,14 @@ impl AcpiHandler for LockedHandler {
             region.mapped_length
         );
 
-        let handler = &mut *self.inner.lock();
-
-        let start =
-            PhysFrame::from_start_address(PhysAddr::new(region.physical_start as u64)).unwrap();
-        let end = PhysFrame::from_start_address(PhysAddr::new(
+        let start = Page::from_start_address(VirtAddr::new(region.physical_start as u64)).unwrap();
+        let end = Page::from_start_address(VirtAddr::new(
             (region.physical_start + region.mapped_length) as u64,
         ))
         .unwrap();
 
-        for frame in PhysFrame::range(start, end) {
-            let entry = handler
-                .mapping_refs
-                .get_mut(&frame.start_address().as_u64())
-                .expect("Trying to unmap non mapped frame");
-
-            *entry -= 1;
-
-            if *entry == 0 {
-                identity_unmap(frame).expect("Failed to identity map");
-            }
+        for page in Page::range(start, end) {
+            self.unmap(page)
         }
     }
 }

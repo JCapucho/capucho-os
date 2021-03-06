@@ -1,18 +1,15 @@
-use crate::{acpi::Acpi, interrupts, memory::identity_map};
+use crate::{acpi::Acpi, interrupts, memory::mmap_dev};
 use acpi::platform::Apic;
 use aml::{value::Args, AmlName, AmlValue};
 use core::fmt;
-use x86_64::{
-    structures::paging::{PageTableFlags, PhysFrame},
-    PhysAddr,
-};
+use x86_64::{structures::paging::PhysFrame, PhysAddr};
 
 /// # Safety
 /// The provided `base_address` must be valid
 unsafe fn lapic_handover(base_address: u64) {
-    identity_map(
+    mmap_dev(
         PhysFrame::from_start_address(PhysAddr::new(base_address)).unwrap(),
-        PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+        false,
     )
     .expect("Failed to identity map");
 
@@ -76,9 +73,9 @@ impl IOApic {
     /// # Safety
     /// The provided `base_address` must be valid
     pub unsafe fn new(base_address: u64) -> Self {
-        identity_map(
+        mmap_dev(
             PhysFrame::from_start_address(PhysAddr::new(base_address)).unwrap(),
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+            false,
         )
         .expect("Failed to identity map");
 

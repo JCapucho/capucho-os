@@ -8,9 +8,7 @@
 extern crate alloc;
 
 use bootloader::{entry_point, BootInfo};
-use capucho_os::{
-    acpi::SleepState, apic, memory::identity_map_mmap_dev, println, sata::HBAMemoryRegisters,
-};
+use capucho_os::{acpi::SleepState, apic, memory::mmap_dev, println, sata::HBAMemoryRegisters};
 use core::panic::PanicInfo;
 use pci_types::{device_type::DeviceType, Bar, EndpointHeader};
 use x86_64::{structures::paging::PhysFrame, PhysAddr};
@@ -82,7 +80,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let end = PhysFrame::containing_address(PhysAddr::new((abar_address + abar_size - 1) as u64));
 
     for frame in PhysFrame::range_inclusive(start, end) {
-        unsafe { identity_map_mmap_dev(frame).expect("Failed to mmap the sata device") }
+        unsafe { mmap_dev(frame, false).expect("Failed to mmap the sata device") };
     }
 
     let hba_mem_reg = unsafe { &mut *(abar_address as *mut HBAMemoryRegisters) };

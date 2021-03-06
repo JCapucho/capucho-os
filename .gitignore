@@ -2,3 +2,4 @@
 **/*.rs.bk
 /hdd.img
 /hdd-mnt
+*.log

@@ -1,3 +1,5 @@
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use buddy_system_allocator::LockedHeap;
 use x86_64::{
     structures::paging::{mapper::MapToError, Page, PageTableFlags, Size4KiB},
@@ -11,6 +13,8 @@ pub const HEAP_SIZE: usize = 500 * 1024; // 500 KiB
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::new();
+
+pub static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 pub fn init_heap() -> Result<(), MapToError<Size4KiB>> {
     let page_range = {
@@ -29,5 +33,18 @@ pub fn init_heap() -> Result<(), MapToError<Size4KiB>> {
         ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
     }
 
+    INITIALIZED.store(true, Ordering::SeqCst);
+
     Ok(())
+}
+
+pub fn stats() -> usize { ALLOCATOR.lock().stats_alloc_actual() }
+
+#[alloc_error_handler]
+fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
+    if INITIALIZED.load(Ordering::Relaxed) {
+        panic!("Allocation error: {:?}", layout)
+    } else {
+        panic!("Allocator not initialized")
+    }
 }

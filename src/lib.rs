@@ -12,7 +12,7 @@
 use bootloader::entry_point;
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
-use memory::{BootInfoFrameAllocator, PagingContext};
+use memory::{GlobalFrameAllocator, PagingContext};
 use spin::Mutex;
 use x86_64::{structures::port::PortWrite, VirtAddr};
 
@@ -46,8 +46,8 @@ pub fn init(boot_info: &'static BootInfo) {
     // Setup memory and heap
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
 
-    let mapper = unsafe { memory::init(phys_mem_offset) };
-    let allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
+    let mut mapper = unsafe { memory::init(phys_mem_offset) };
+    let allocator = unsafe { GlobalFrameAllocator::init(&boot_info.memory_map, &mut mapper) };
 
     memory::PAGING_CTX.call_once(|| Mutex::new(PagingContext { mapper, allocator }));
 
@@ -135,8 +135,3 @@ fn test_kernel_main(boot_info: &'static BootInfo) -> ! {
 #[cfg(test)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! { test_panic_handler(info) }
-
-#[alloc_error_handler]
-fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
-    panic!("allocation error: {:?}", layout)
-}
