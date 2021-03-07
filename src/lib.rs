@@ -12,8 +12,6 @@
 use bootloader::entry_point;
 use bootloader::BootInfo;
 use core::panic::PanicInfo;
-use memory::{GlobalFrameAllocator, PagingContext};
-use spin::Mutex;
 use x86_64::{structures::port::PortWrite, VirtAddr};
 
 extern crate alloc;
@@ -46,10 +44,7 @@ pub fn init(boot_info: &'static BootInfo) {
     // Setup memory and heap
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
 
-    let mut mapper = unsafe { memory::init(phys_mem_offset) };
-    let allocator = unsafe { GlobalFrameAllocator::init(&boot_info.memory_map, &mut mapper) };
-
-    memory::PAGING_CTX.call_once(|| Mutex::new(PagingContext { mapper, allocator }));
+    unsafe { memory::init(phys_mem_offset, &boot_info.memory_map) };
 
     allocator::init_heap().expect("heap initialization failed");
 }

@@ -10,7 +10,7 @@ lazy_static! {
     pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer {
         column_position: 0,
         color_code: ColorCode::new(Color::Yellow, Color::Black),
-        buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
+        buffer: Volatile::new(unsafe { &mut *(0xb8000 as *mut Buffer) }),
     });
 }
 
@@ -65,10 +65,7 @@ const BUFFER_HEIGHT: usize = 25;
 const BUFFER_WIDTH: usize = 80;
 
 /// A structure representing the VGA text buffer.
-#[repr(transparent)]
-struct Buffer {
-    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
-}
+type Buffer = [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT];
 
 /// A writer type that allows writing ASCII bytes and strings to an underlying
 /// `Buffer`.
@@ -78,10 +75,15 @@ struct Buffer {
 pub struct Writer {
     column_position: usize,
     color_code: ColorCode,
-    buffer: &'static mut Buffer,
+    buffer: Volatile<&'static mut Buffer>,
 }
 
 impl Writer {
+    /// Gets a mutable reference to a charachter
+    fn get_char_mut(&mut self, row: usize, col: usize) -> Volatile<&mut ScreenChar> {
+        self.buffer.map_mut(|b| &mut b[row][col])
+    }
+
     /// Writes an ASCII byte to the buffer.
     ///
     /// Wraps lines at `BUFFER_WIDTH`. Supports the `\n` newline character.
@@ -97,7 +99,7 @@ impl Writer {
                 let col = self.column_position;
 
                 let color_code = self.color_code;
-                self.buffer.chars[row][col].write(ScreenChar {
+                self.get_char_mut(row, col).write(ScreenChar {
                     ascii_character: byte,
                     color_code,
                 });
@@ -126,8 +128,8 @@ impl Writer {
     fn new_line(&mut self) {
         for row in 1..BUFFER_HEIGHT {
             for col in 0..BUFFER_WIDTH {
-                let character = self.buffer.chars[row][col].read();
-                self.buffer.chars[row - 1][col].write(character);
+                let character = self.get_char_mut(row, col).read();
+                self.get_char_mut(row - 1, col).write(character);
             }
         }
         self.clear_row(BUFFER_HEIGHT - 1);
@@ -141,7 +143,7 @@ impl Writer {
             color_code: self.color_code,
         };
         for col in 0..BUFFER_WIDTH {
-            self.buffer.chars[row][col].write(blank);
+            self.get_char_mut(row, col).write(blank);
         }
     }
 }

@@ -1,6 +1,6 @@
 pub use frame_allocator::GlobalFrameAllocator;
 
-use bootloader::bootinfo::MemoryRegionType;
+use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
 use spin::{Mutex, Once};
 use x86_64::{
     structures::paging::{
@@ -28,9 +28,12 @@ pub static PAGING_CTX: Once<Mutex<PagingContext>> = Once::new();
 /// complete physical memory is mapped to virtual memory at the passed
 /// `physical_memory_offset`. Also, this function must be only called once
 /// to avoid aliasing `&mut` references (which is undefined behavior).
-pub unsafe fn init(physical_memory_offset: VirtAddr) -> OffsetPageTable<'static> {
+pub unsafe fn init(physical_memory_offset: VirtAddr, memory_map: &'static MemoryMap) {
     let level_4_table = active_level_4_table(physical_memory_offset);
-    OffsetPageTable::new(level_4_table, physical_memory_offset)
+    let mut mapper = OffsetPageTable::new(level_4_table, physical_memory_offset);
+    let allocator = GlobalFrameAllocator::init(memory_map, &mut mapper);
+
+    PAGING_CTX.call_once(|| Mutex::new(PagingContext { mapper, allocator }));
 }
 
 /// Returns a mutable reference to the active level 4 table.
