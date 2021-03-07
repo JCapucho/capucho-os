@@ -15,7 +15,7 @@ mod frame_allocator;
 
 pub struct PagingContext {
     pub mapper: OffsetPageTable<'static>,
-    pub allocator: GlobalFrameAllocator,
+    pub allocator: GlobalFrameAllocator<'static>,
 }
 
 pub static PAGING_CTX: Once<Mutex<PagingContext>> = Once::new();

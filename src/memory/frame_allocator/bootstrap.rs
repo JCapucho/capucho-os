@@ -4,8 +4,6 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-use super::{FrameAllocatorBitmap, BITMAP_START};
-
 pub struct BootStrapAllocator {
     pub memory_map: &'static MemoryMap,
     pub next: usize,
@@ -13,13 +11,7 @@ pub struct BootStrapAllocator {
 }
 
 impl BootStrapAllocator {
-    pub(super) fn allocate_bitmap(
-        &mut self,
-        mapper: &mut impl Mapper<Size4KiB>,
-        bitmap_idx: u64,
-    ) -> *mut FrameAllocatorBitmap {
-        let addr = BITMAP_START + bitmap_idx * 0x1000;
-
+    pub fn allocate_bitmap_frame(&mut self, mapper: &mut impl Mapper<Size4KiB>, addr: u64) {
         let frame = self.allocate_frame().expect("Failed to allocate frame");
 
         unsafe {
@@ -33,8 +25,6 @@ impl BootStrapAllocator {
                 .expect("Failed to map")
                 .flush()
         }
-
-        addr as *mut FrameAllocatorBitmap
     }
 
     fn usable_frames(&self) -> impl Iterator<Item = (PhysFrame, usize)> {

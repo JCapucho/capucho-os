@@ -1,5 +1,4 @@
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
-use core::ptr;
 use x86_64::{
     structures::paging::{FrameAllocator, FrameDeallocator, Mapper, PhysFrame, Size4KiB},
     PhysAddr,
@@ -11,55 +10,15 @@ mod bootstrap;
 
 pub const BITMAP_START: u64 = 0x_6666_6666_0000;
 
-// Only use 4088 bytes so that with the pointer to the next block we only
-// consume one 4k frame
-const STORAGE_PER_BITMAP: usize = 1022;
-const BITS_PER_BITMAP: usize = STORAGE_PER_BITMAP * 32;
-
-#[repr(C, packed)]
-struct FrameAllocatorBitmap {
-    bits: [u32; STORAGE_PER_BITMAP],
-    next: *mut Self,
-}
-
-impl FrameAllocatorBitmap {
-    fn next_block(&self) -> Option<*const FrameAllocatorBitmap> {
-        if !self.next.is_null() {
-            Some(self.next)
-        } else {
-            None
-        }
-    }
-
-    fn next_block_mut(&mut self) -> Option<*mut FrameAllocatorBitmap> {
-        if !self.next.is_null() {
-            Some(self.next)
-        } else {
-            None
-        }
-    }
-}
-
-impl Default for FrameAllocatorBitmap {
-    fn default() -> Self {
-        FrameAllocatorBitmap {
-            bits: [Default::default(); 1022],
-            next: ptr::null_mut(),
-        }
-    }
-}
-
-unsafe impl Send for FrameAllocatorBitmap {}
-
 /// A FrameAllocator that returns usable frames from the bootloader's memory
 /// map.
-pub struct GlobalFrameAllocator {
+pub struct GlobalFrameAllocator<'a> {
     memory_map: &'static MemoryMap,
-    root: *mut FrameAllocatorBitmap,
     next_usable: u64,
+    bitmap: &'a mut [u32],
 }
 
-impl GlobalFrameAllocator {
+impl<'a> GlobalFrameAllocator<'a> {
     /// Create a FrameAllocator from the passed memory map.
     ///
     /// # Safety
@@ -68,13 +27,14 @@ impl GlobalFrameAllocator {
     /// passed memory map is valid. The main requirement is that all frames
     /// that are marked as `USABLE` in it are really unused.
     pub unsafe fn init(memory_map: &'static MemoryMap, mapper: &mut impl Mapper<Size4KiB>) -> Self {
-        // Calculate the number of required bitmaps by getting the index of the
-        // last frame and ceiling diving by the number of bits per bitmap
+        // Calculate the number of required frames by getting the index of the
+        // last frame and ceiling diving by the number of bits per frame
         //
         // Code for the fast ceiling division taken from:
         // https://stackoverflow.com/questions/2745074/fast-ceiling-of-an-integer-division-in-c-c
+        const BITS_PER_FRAME: u64 = 0x1000 * 8;
         let end_frame = memory_map.last().unwrap().range.end_frame_number;
-        let required_bitmaps = (end_frame + BITS_PER_BITMAP as u64 - 1) / BITS_PER_BITMAP as u64;
+        let bitmap_frames = (end_frame + BITS_PER_FRAME as u64 - 1) / BITS_PER_FRAME as u64;
 
         // We need to map some frames for the bitmaps and since we need to map
         // them we might also need some frames for the page tables.
@@ -90,21 +50,17 @@ impl GlobalFrameAllocator {
         };
 
         // Allocate the bitmaps and store a pointer for the root bitmap
-        let root = bootstrap.allocate_bitmap(mapper, 0);
-        let mut last = &mut *root;
-
-        for i in 1..required_bitmaps {
-            let next = bootstrap.allocate_bitmap(mapper, i);
-
-            last.next = next;
-
-            last = &mut *next;
+        for i in 0..bitmap_frames {
+            bootstrap.allocate_bitmap_frame(mapper, BITMAP_START + i * 0x1000);
         }
+
+        let bitmap =
+            core::slice::from_raw_parts_mut(BITMAP_START as *mut _, end_frame as usize + 1);
 
         let mut this = GlobalFrameAllocator {
             memory_map,
-            root,
             next_usable: 0,
+            bitmap,
         };
 
         // Mark the frames that were used by the bootstrap allocator
@@ -144,29 +100,23 @@ impl GlobalFrameAllocator {
 
     /// Check if the frame `idx` is used
     fn is_used(&self, idx: u64) -> bool {
-        let (bitmap, int, mask) = frame_idx_to_parts(idx);
+        let (int, mask) = frame_idx_to_parts(idx);
 
-        let block = unsafe { &*self.get_bitmap(bitmap).expect("There's no next block") };
-
-        block.bits[int] & mask != 0
+        self.bitmap[int] & mask != 0
     }
 
     /// Set the frame `idx` as used
     fn mark_used(&mut self, idx: u64) {
-        let (bitmap, int, mask) = frame_idx_to_parts(idx);
+        let (int, mask) = frame_idx_to_parts(idx);
 
-        let block = unsafe { &mut *self.get_bitmap_mut(bitmap).expect("There's no next block") };
-
-        block.bits[int] |= mask;
+        self.bitmap[int] |= mask;
     }
 
     /// Set the frame `idx` as unused
     fn mark_unused(&mut self, idx: u64) {
-        let (bitmap, int, mask) = frame_idx_to_parts(idx);
+        let (int, mask) = frame_idx_to_parts(idx);
 
-        let block = unsafe { &mut *self.get_bitmap_mut(bitmap).expect("There's no next block") };
-
-        block.bits[int] &= !mask;
+        self.bitmap[int] &= !mask;
     }
 
     /// Get the `MemoryRegionType` of a frame
@@ -206,31 +156,9 @@ impl GlobalFrameAllocator {
         // There are no usable frames
         false
     }
-
-    /// Get a pointer to a bitmap at the specified `level` depth
-    fn get_bitmap(&self, level: u64) -> Option<*const FrameAllocatorBitmap> {
-        let mut ptr = unsafe { &*self.root };
-
-        for _ in 0..level {
-            ptr = unsafe { &*ptr.next_block()? };
-        }
-
-        Some(ptr)
-    }
-
-    /// Get a mutable pointer to a bitmap at the specified `level` depth
-    fn get_bitmap_mut(&mut self, level: u64) -> Option<*mut FrameAllocatorBitmap> {
-        let mut ptr = unsafe { &mut *self.root };
-
-        for _ in 0..level {
-            ptr = unsafe { &mut *ptr.next_block_mut()? };
-        }
-
-        Some(ptr)
-    }
 }
 
-unsafe impl FrameAllocator<Size4KiB> for GlobalFrameAllocator {
+unsafe impl<'a> FrameAllocator<Size4KiB> for GlobalFrameAllocator<'a> {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
         // See if there are frames available
         if self.recalculate_next_usable() {
@@ -251,21 +179,18 @@ unsafe impl FrameAllocator<Size4KiB> for GlobalFrameAllocator {
     }
 }
 
-impl FrameDeallocator<Size4KiB> for GlobalFrameAllocator {
+impl<'a> FrameDeallocator<Size4KiB> for GlobalFrameAllocator<'a> {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
         self.mark_unused(frame.start_address().as_u64() / 0x1000)
     }
 }
 
-unsafe impl Send for GlobalFrameAllocator {}
-
 /// Helper function translates a frame index to it's part in the bitmap
-/// (bitmap, int, mask) where bitmap is the depth level of the bitmap
-/// int is the index on the `u32` array and mask is the mask over the `u32`
-fn frame_idx_to_parts(idx: u64) -> (u64, usize, u32) {
-    let bitmap = idx / BITS_PER_BITMAP as u64;
-    let int = (idx as usize % BITS_PER_BITMAP) / 32;
+/// (int, mask) where int is the index on the `u32` array and mask is the mask
+/// over the `u32`
+fn frame_idx_to_parts(idx: u64) -> (usize, u32) {
+    let int = idx as usize / 32;
     let bit = idx as u32 % 32;
 
-    (bitmap, int, 1 << bit)
+    (int, 1 << bit)
 }
