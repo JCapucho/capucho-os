@@ -1,8 +1,59 @@
 use crate::{acpi::Acpi, interrupts, memory::mmap_dev};
-use acpi::platform::Apic;
+use acpi::platform::Apic as ApicInfo;
+use alloc::vec::Vec;
 use aml::{value::Args, AmlName, AmlValue};
 use core::fmt;
 use x86_64::{structures::paging::PhysFrame, PhysAddr};
+
+pub struct Apic {
+    info: ApicInfo,
+    io_apics: Vec<IOApic>,
+}
+
+impl Apic {
+    /// Returns the vector of an interrupt considering overrides
+    fn get_interrupt_source(&self, vector: u8) -> u8 {
+        self.info
+            .interrupt_source_overrides
+            .iter()
+            .find_map(|v| Some(v.global_system_interrupt as u8).filter(|_| v.isa_source == vector))
+            .unwrap_or(vector)
+    }
+
+    /// Returns the index, if it exists, of the io apic that handles the
+    /// specified interrupt vector
+    fn get_interrupt_ioapic(&self, vector: u8) -> usize {
+        let mut idx = 0;
+        let mut current_base = self.io_apics[0].base_interrupt;
+
+        for (i, io_apic) in self.io_apics.iter().enumerate() {
+            if vector < io_apic.base_interrupt {
+                continue;
+            }
+
+            if current_base < io_apic.base_interrupt {
+                idx = i;
+                current_base = io_apic.base_interrupt;
+            }
+        }
+
+        idx
+    }
+
+    fn get_entry(&self, vector: u8) -> RedirEntry {
+        let vector = self.get_interrupt_source(vector);
+        let idx = self.get_interrupt_ioapic(vector);
+
+        self.io_apics[idx].redir_entry(vector)
+    }
+
+    fn set_entry(&mut self, vector: u8, entry: RedirEntry) {
+        let vector = self.get_interrupt_source(vector);
+        let idx = self.get_interrupt_ioapic(vector);
+
+        self.io_apics[idx].set_redir_entry(vector, entry)
+    }
+}
 
 /// # Safety
 /// The provided `base_address` must be valid
@@ -17,7 +68,7 @@ unsafe fn lapic_handover(base_address: u64) {
 }
 
 /// Hands over control from the pic to the apic and the ioapic
-pub fn apic_init(acpi: &mut Acpi, apic: Apic) {
+pub fn apic_init(acpi: &mut Acpi, info: ApicInfo) -> Apic {
     x86_64::instructions::interrupts::without_interrupts(|| {
         let args = Args {
             // 0 – PIC mode
@@ -33,55 +84,55 @@ pub fn apic_init(acpi: &mut Acpi, apic: Apic) {
             .aml_context()
             .invoke_method(&AmlName::from_str("\\_PIC").unwrap(), args);
 
-        unsafe { lapic_handover(apic.local_apic_address) };
+        unsafe { lapic_handover(info.local_apic_address) };
 
-        let timer_irq = apic
-            .interrupt_source_overrides
-            .iter()
-            .find_map(|v| Some(v.global_system_interrupt).filter(|_| v.isa_source == 0))
-            .unwrap_or(0) as u8;
+        let mut io_apics = Vec::with_capacity(info.io_apics.len());
 
-        let keyboard_irq = apic
-            .interrupt_source_overrides
-            .iter()
-            .find_map(|v| Some(v.global_system_interrupt).filter(|_| v.isa_source == 1))
-            .unwrap_or(1) as u8;
+        for io_apic in info.io_apics.iter() {
+            let base_address = io_apic.address as u64;
 
-        let ioapic = unsafe { IOApic::new(apic.io_apics[0].address as u64) };
+            unsafe {
+                mmap_dev(
+                    PhysFrame::from_start_address(PhysAddr::new(base_address)).unwrap(),
+                    false,
+                )
+                .expect("Failed to identity map");
+            }
+
+            io_apics.push(IOApic {
+                base_address,
+                base_interrupt: io_apic.global_system_interrupt_base as u8,
+            })
+        }
+
+        let mut this = Apic { info, io_apics };
 
         // Set timer interrupt
-        let mut entry = ioapic.redir_entry(timer_irq);
+        let mut entry = this.get_entry(0);
 
         entry.set_vector(32);
         entry.set_masked(false);
 
-        ioapic.set_redir_entry(timer_irq, entry);
+        this.set_entry(0, entry);
 
         // Set keyboard interrupt
-        let mut entry = ioapic.redir_entry(keyboard_irq);
+        let mut entry = this.get_entry(1);
 
         entry.set_vector(33);
         entry.set_masked(false);
 
-        ioapic.set_redir_entry(keyboard_irq, entry);
+        this.set_entry(1, entry);
+
+        this
     })
 }
 
-pub struct IOApic(u64);
+pub struct IOApic {
+    base_address: u64,
+    base_interrupt: u8,
+}
 
 impl IOApic {
-    /// # Safety
-    /// The provided `base_address` must be valid
-    pub unsafe fn new(base_address: u64) -> Self {
-        mmap_dev(
-            PhysFrame::from_start_address(PhysAddr::new(base_address)).unwrap(),
-            false,
-        )
-        .expect("Failed to identity map");
-
-        IOApic(base_address)
-    }
-
     pub fn id(&self) -> u8 {
         let res = unsafe { self.read_reg(0x00) };
         ((res >> 24) & 0xF) as u8
@@ -128,15 +179,15 @@ impl IOApic {
     }
 
     unsafe fn read_reg(&self, reg: u8) -> u32 {
-        let address_reg = self.0 as *mut u32;
-        let data_reg = (self.0 + 0x10) as *const u32;
+        let address_reg = self.base_address as *mut u32;
+        let data_reg = (self.base_address + 0x10) as *const u32;
         address_reg.write_volatile(reg as u32);
         data_reg.read_volatile()
     }
 
     unsafe fn write_reg(&self, reg: u8, val: u32) {
-        let address_reg = self.0 as *mut u32;
-        let data_reg = (self.0 + 0x10) as *mut u32;
+        let address_reg = self.base_address as *mut u32;
+        let data_reg = (self.base_address + 0x10) as *mut u32;
         address_reg.write_volatile(reg as u32);
         data_reg.write_volatile(val)
     }

@@ -29,11 +29,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     log::debug!("Apic handover start");
 
-    match platform_info.interrupt_model {
-        acpi::InterruptModel::Unknown => (),
+    let _apic = match platform_info.interrupt_model {
+        acpi::InterruptModel::Unknown => panic!("We need apic"),
         acpi::InterruptModel::Apic(apic) => apic::apic_init(&mut acpi, apic),
         _ => unreachable!(),
-    }
+    };
 
     log::debug!("Apic handover end");
 
@@ -100,6 +100,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     for port in hba_mem_reg.port_slice_mut() {
         unsafe {
             log::info!("{:#X}", port.sig);
+            log::info!("{:?}", port.ssts);
+            log::info!("{:?}", port.int_status);
+            log::info!("{:?}\n", port.int_enable);
         }
     }
 

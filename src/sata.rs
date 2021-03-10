@@ -1,7 +1,16 @@
 use bitflags::bitflags;
-use core::mem::MaybeUninit;
+use core::{
+    fmt::{self, Debug},
+    mem::MaybeUninit,
+};
+
+pub const ATA_SIGNATURE: u32 = 0x00000101;
+pub const ATAPI_SIGNATURE: u32 = 0xEB140101;
+pub const SEMB_SIGNATURE: u32 = 0xC33C0101;
+pub const PM_SIGNATURE: u32 = 0x96690101;
 
 bitflags! {
+    #[repr(C)]
     pub struct HBACapabilities: u32 {
         const SXS_SUPPORT = 1 << 5;
         const EMS_SUPPORT = 1 << 6;
@@ -31,13 +40,9 @@ pub enum InterfaceSpeed {
     Reserved,
 }
 
-impl HBACapabilities {
-    pub fn number_of_ports(&self) -> u8 { (self.bits() & 0b11111) as u8 }
-
-    pub fn number_of_cmd_slots(&self) -> u8 { ((self.bits() >> 8) & 0b11111) as u8 }
-
-    pub fn if_speed(&self) -> InterfaceSpeed {
-        match (self.bits() >> 20) & 0b1111 {
+impl From<u32> for InterfaceSpeed {
+    fn from(bits: u32) -> Self {
+        match bits {
             0 => InterfaceSpeed::Reserved,
             0b0001 => InterfaceSpeed::Gen1,
             0b0010 => InterfaceSpeed::Gen2,
@@ -45,6 +50,64 @@ impl HBACapabilities {
             _ => InterfaceSpeed::Reserved,
         }
     }
+}
+
+#[derive(Debug)]
+pub enum InterfacePowerManagement {
+    NoDevice,
+    Active,
+    Partial,
+    Slumber,
+    DevSleep,
+    Reserved,
+}
+
+impl From<u32> for InterfacePowerManagement {
+    fn from(bits: u32) -> Self {
+        match bits {
+            0 => InterfacePowerManagement::NoDevice,
+            0b0001 => InterfacePowerManagement::Active,
+            0b0010 => InterfacePowerManagement::Partial,
+            0b0110 => InterfacePowerManagement::Slumber,
+            0b1000 => InterfacePowerManagement::DevSleep,
+            _ => InterfacePowerManagement::Reserved,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum DeviceDetection {
+    NoDevice,
+    DeviceNoPhy,
+    Device,
+    InterfaceDisabled,
+    Reserved,
+}
+
+impl DeviceDetection {
+    pub fn has_device(&self) -> bool {
+        matches!(self, DeviceDetection::Device | DeviceDetection::DeviceNoPhy)
+    }
+}
+
+impl From<u32> for DeviceDetection {
+    fn from(bits: u32) -> Self {
+        match bits {
+            0 => DeviceDetection::NoDevice,
+            0b0001 => DeviceDetection::DeviceNoPhy,
+            0b0011 => DeviceDetection::Device,
+            0b0100 => DeviceDetection::InterfaceDisabled,
+            _ => DeviceDetection::Reserved,
+        }
+    }
+}
+
+impl HBACapabilities {
+    pub fn number_of_ports(&self) -> u8 { (self.bits() & 0b11111) as u8 }
+
+    pub fn number_of_cmd_slots(&self) -> u8 { ((self.bits() >> 8) & 0b11111) as u8 }
+
+    pub fn if_speed(&self) -> InterfaceSpeed { InterfaceSpeed::from((self.bits() >> 20) & 0b1111) }
 }
 
 bitflags! {
@@ -56,21 +119,67 @@ bitflags! {
     }
 }
 
+#[repr(C)]
+pub struct StatusPort(u32);
+
+impl StatusPort {
+    pub fn if_speed(&self) -> InterfaceSpeed { InterfaceSpeed::from((self.0 >> 4) & 0b1111) }
+
+    pub fn if_power_management(&self) -> InterfacePowerManagement {
+        InterfacePowerManagement::from((self.0 >> 8) & 0b1111)
+    }
+
+    pub fn detection(&self) -> DeviceDetection { DeviceDetection::from(self.0 & 0b1111) }
+}
+
+impl fmt::Debug for StatusPort {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.detection().fmt(f)?;
+        write!(f, " | ")?;
+        self.if_power_management().fmt(f)?;
+        write!(f, " | ")?;
+        self.if_speed().fmt(f)
+    }
+}
+
+bitflags! {
+    #[repr(C)]
+    pub struct PortInterrupt: u32 {
+        const D2H_REG_FIS_INT = 1;
+        const PIO_SETUP_FIS_INT = 1 << 1;
+        const DMA_SETUP_FIS_INT = 1 << 2;
+        const SET_DEV_BITS_FIS_INT = 1 << 3;
+        const UNKNOWN_FIS_INT = 1 << 4;
+        const PRD_PROCESSED_INT = 1 << 5;
+        const PORT_CONNECT_CHANGE = 1 << 6;
+        const MECHANICAL_PRESENCE = 1 << 7;
+        const PHY_READY_CHANGE = 1 << 22;
+        const BAD_PORT_MUL_STATUS = 1 << 23;
+        const OVERFLOW = 1 << 24;
+        const IF_NON_FATAL_ERROR = 1 << 26;
+        const IF_FATAL_ERROR = 1 << 27;
+        const HOST_DATA_ERROR = 1 << 28;
+        const HOST_FATAL_ERROR = 1 << 29;
+        const TASK_FILE_ERROR = 1 << 30;
+        const COLD_PORT_DETECT = 1 << 31;
+    }
+}
+
 #[repr(C, packed)]
 pub struct HBAPortRegisters {
-    pub clb: u32,
-    pub clbu: u32,
-    pub fb: u32,
-    pub fbu: u32,
-    pub int_status: u32,
-    pub int_enable: u32,
+    clb: u32,
+    clbu: u32,
+    fb: u32,
+    fbu: u32,
+    pub int_status: PortInterrupt,
+    pub int_enable: PortInterrupt,
     pub cmd: u32,
 
     reserved_0: u32,
 
     pub tfd: u32,
     pub sig: u32,
-    pub ssts: u32,
+    pub ssts: StatusPort,
     pub sctl: u32,
     pub serr: u32,
     pub sact: u32,
@@ -86,8 +195,8 @@ impl HBAPortRegisters {
     pub fn cmd_list_addr(&self) -> u64 { (self.clbu as u64) << 32 | self.clb as u64 }
 
     /// # Safety
-    /// The user must assure that the address is only 64bit
-    /// if the ahci supports it
+    /// The caller must assure that the address is only 64bit
+    /// if the ahci supports it and points to usable memory
     pub unsafe fn set_cmd_list_addr(&mut self, addr: u64) {
         assert_eq!(addr & 0x3FF, 0, "Address must be 1K aligned");
 
@@ -96,6 +205,16 @@ impl HBAPortRegisters {
     }
 
     pub fn fis_addr(&self) -> u64 { (self.fbu as u64) << 32 | self.fb as u64 }
+
+    /// # Safety
+    /// The caller must assure that the address is only 64bit
+    /// if the ahci supports it and points to usable memory
+    pub unsafe fn set_fb_list_addr(&mut self, addr: u64) {
+        assert_eq!(addr & 0x3FF, 0, "Address must be 1K aligned");
+
+        self.fb = addr as u32;
+        self.fbu = (addr >> 32) as u32;
+    }
 }
 
 #[repr(C, packed)]
