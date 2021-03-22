@@ -8,7 +8,7 @@
 extern crate alloc;
 
 use bootloader::{entry_point, BootInfo};
-use capucho_os::{acpi::SleepState, apic, memory::mmap_dev, println, sata::HBAMemoryRegisters};
+use capucho_os::{acpi::SleepState, ahci::HBAMemoryRegisters, apic, memory::mmap_dev, println};
 use core::panic::PanicInfo;
 use pci_types::{device_type::DeviceType, Bar, EndpointHeader};
 use x86_64::{structures::paging::PhysFrame, PhysAddr};

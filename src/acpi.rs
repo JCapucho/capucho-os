@@ -171,12 +171,16 @@ pub unsafe fn bios_get_acpi() -> Acpi {
                 .expect("Couldn't find the FADT")
         };
 
-        // Allow unused unsafe blocks because packed struct accesses are
-        // unsafe and throw a warning and later become a hard error
-        #[allow(unused_unsafe)]
-        let pm1a_cnt = unsafe { fadt.pm1a_control_block } as u16;
-        #[allow(unused_unsafe)]
-        let pm1b_cnt = unsafe { fadt.pm1b_control_block } as u16;
+        // Todo: check for address space (we assume port space)
+        let pm1a_cnt = fadt
+            .pm1a_control_block()
+            .expect("Error when parsing pm1a control block")
+            .address as u16;
+        let pm1b_cnt = fadt
+            .pm1b_control_block()
+            .expect("Error when parsing pm1b control block")
+            .filter(|cnt| cnt.address != 0)
+            .map(|cnt| cnt.address as u16);
 
         Acpi {
             tables,
@@ -221,7 +225,7 @@ pub struct Acpi {
 
     smi_cmd_port: u16,
     pm1a_cnt: u16,
-    pm1b_cnt: u16,
+    pm1b_cnt: Option<u16>,
     acpi_enable: u8,
 }
 
@@ -239,20 +243,19 @@ impl Acpi {
 
         u8::write_to_port(self.smi_cmd_port, self.acpi_enable);
 
-        let mut finished = false;
-
         for _ in 0..300 {
-            if u16::read_from_port(self.pm1a_cnt) & 1 == 1 && self.pm1b_cnt == 0
-                || u16::read_from_port(self.pm1b_cnt) & 1 == 1
+            if u16::read_from_port(self.pm1a_cnt) & 1 == 1
+                && self
+                    .pm1b_cnt
+                    .map_or(true, |cnt| u16::read_from_port(cnt) & 1 == 1)
             {
-                finished = true;
-                break;
+                return true;
             }
 
             crate::sleep(10);
         }
 
-        finished
+        false
     }
 
     pub fn set_sleep_state(&mut self, state: SleepState) -> bool {
@@ -265,8 +268,8 @@ impl Acpi {
         unsafe {
             u16::write_to_port(self.pm1a_cnt, SLP_EN | slp_typa << 10);
 
-            if self.pm1b_cnt != 0 {
-                u16::write_to_port(self.pm1b_cnt, SLP_EN | slp_typb << 10);
+            if let Some(cnt) = self.pm1b_cnt {
+                u16::write_to_port(cnt, SLP_EN | slp_typb << 10);
             }
         }
 
